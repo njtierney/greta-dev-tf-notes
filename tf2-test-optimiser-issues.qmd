@@ -1,0 +1,630 @@
+```{r}
+x <- rnorm(5, 2, 0.1)
+z <- variable(dim = 5)
+distribution(x) <- normal(z, 0.1)
+
+m <- model(z)
+o <- opt(model = m,
+         initial_values = initials(z = rnorm(5)),
+         optimiser = gradient_descent())
+```
+
+Putting a browser in the optimiser initialisation, we end up at:
+
+```{r}
+# set up the model
+initialize = function(initial_values,
+                      model,
+                      name,
+                      method,
+                      parameters,
+                      other_args,
+                      max_iterations,
+                      tolerance,
+                      adjust) {
+  super$initialize(initial_values,
+                   model,
+                   parameters = list(),
+                   seed = get_seed()
+  )
+
+  self$name <- name
+  self$method <- method
+  self$parameters <- parameters
+  self$other_args <- other_args
+  self$max_iterations <- as.integer(max_iterations)
+  self$tolerance <- tolerance
+  self$adjust <- adjust
+
+  if ("uses_callbacks" %in% names(other_args)) {
+    self$uses_callbacks <- other_args$uses_callbacks
+  }
+
+  browser()
+  self$create_optimiser_objective()
+  self$create_tf_minimiser()
+}
+```
+
+```{r}
+tfe$tf_optimiser$minimize(
+  dag$tf_log_prob_function_adjusted,
+  var_list = c(free_state = tf$Variable(self$free_state))
+)
+```
+
+We create the optimiser objective perfectly fine, then let's step into `create_tf_minimizer()`
+
+```{r}
+create_tf_minimiser = function() {
+  # browser()
+  dag <- self$model$dag
+  tfe <- dag$tf_environment
+
+  self$sanitise_dtypes()
+
+  optimise_fun <- eval(parse(text = self$method))
+  # dag$on_graph(
+  tfe$tf_optimiser <- do.call(
+    optimise_fun,
+    self$parameters
+  )
+  # )
+
+  if (self$adjust) {
+    browser()
+    dag$tf_run(train <- tf_optimiser$minimize(optimiser_objective_adj))
+    })
+  } else {
+    dag$tf_run(train <- tf_optimiser$minimize(optimiser_objective))
+  }
+}
+
+```
+
+Now, `tfe$optimiser_objective_adj` is
+
+```{r}
+tf.Tensor([232.99020842], shape=(1), dtype=float64)
+```
+
+and running this:
+
+```{r}
+tfe$tf_optimiser$minimize(tfe$optimiser_objective_adj)
+# Error in py_call_impl(callable, dots$args, dots$keywords) :
+#   TypeError: minimize() missing 1 required positional argument: 'var_list'
+```
+
+OK fine - let's put the free state in the `var_list` FYI the free_state is
+
+```{r}
+#> self$free_state
+#           [,1]     [,2]        [,3]       [,4]       [,5]
+# [1,] -1.665815 1.807032 0.005928454 -0.2735771 -0.8771901
+```
+
+SO
+
+```{r}
+tfe$tf_optimiser$minimize(
+  tfe$optimiser_objective_adj,
+  var_list = tf$Variable(initial_value = self$free_state)
+)
+
+# Error in py_call_impl(callable, dots$args, dots$keywords) :
+#   ValueError: `tape` is required when a `Tensor` loss is passed. Received: loss=[232.99020842], tape=None.
+```
+
+OK
+
+OK, let's pass gradient tape
+
+```{r}
+tfe$tf_optimiser$minimize(tfe$optimiser_objective,
+                          var_list = tf$Variable(self$free_state),
+                          tape = tf$GradientTape())
+
+# Error in py_call_impl(callable, dots$args, dots$keywords) :
+#   ValueError: No gradients provided for any variable: (['Variable:0'],). Provided `grads_and_vars` is ((None, <tf.Variable 'Variable:0' shape=(1, 5) dtype=float64, numpy=array([[-1.66581522,  1.80703249,  0.00592845, -0.27357705, -0.8771901 ]])>),).
+```
+
+Now I'm not sure what to make of this - I feel like I'm missing something obvious, like we are supposed to be optimising over something else?
+
+```{r}
+
+dag$tf_log_prob_function(f)
+
+optimiser_minimiser <- function() dag$tf_log_prob_function(free_state)$adjusted
+
+free_state <- tf$Variable(self$free_state)
+
+tfe$tf_optimiser$minimize(
+  optimiser_minimiser,
+  var_list = list(free_state)
+)
+
+dag$tf_log_prob_function_adjusted
+```
+
+OK now I think we've got it!
+
+```{r}
+x <- rnorm(5, 2, 0.1)
+z <- variable(dim = 5)
+distribution(x) <- normal(z, 0.1)
+
+m <- model(z)
+o <- opt(model = m,
+         initial_values = initials(z = rnorm(5)),
+         optimiser = gradient_descent())
+```
+
+OK so it seems that `trace_values` is called twice - once before the optimiser object is created, where it handles the free state as a matrix, and then the next time it handles the values as a tensor object it kinda mucks everything up.
+
+It's time to explore this in more depth, I think
+
+```{r}
+
+```
+
+So, just need to to tinker with `create_optimiser_objective()` I believe!
+
+The models are taking a long time to converge, or at least they don't converge on the first iteration...maybe - need a way to get the method to iterate - need to run the iteration code
+
+```{r}
+debugonce(opt)
+o <- opt(m,
+              optimiser = adadelta(),
+              max_iterations = 200
+    )
+```
+
+OK so now the TF optimisers work, which is great! However the TFP optimisers don't work, which is annoying. And because they have a really different interface.
+
+I think I'll go through and clean up the TF interface somewhat first, and then go back and tinker with the TFP interface.
+
+```{r}
+x <- rnorm(5, 2, 0.1)
+z <- variable(dim = 5)
+distribution(x) <- normal(z, 0.1)
+
+m <- model(z)
+
+debugonce(opt)
+o <- opt(m,
+              optimiser = bfgs(),
+              max_iterations = 200
+    )
+
+o <- opt(m,
+         optimiser = nelder_mead(),
+         max_iterations = 200
+    )
+```
+
+OK so I can now get `bfgs` to work but `nelder_mead` has a totally different interface...this is me trying to get a Python example in R from https://www.tensorflow.org/probability/api_docs/python/tfp/optimizer/nelder_mead_minimize to work
+
+So we can get nelder mead to work from within R like so:
+
+```{r}
+# The objective function
+sqrt_quadratic <- function(x){
+  tf$sqrt(tf$reduce_sum(x ** 2L, axis = -1L))
+}
+  
+start <- tf$constant(c(6.0, -21.0))  # Starting point for the search.
+optim_results <- tfp$optimizer$nelder_mead_minimize(
+  sqrt_quadratic, 
+  initial_vertex = start,
+  func_tolerance = 1e-8,
+  batch_evaluate_objective = TRUE
+  )
+
+# Check that the search converged
+optim_results$converged
+
+np <- reticulate::import("numpy")
+
+optim_results$position
+# Check that the argmin is close to the actual value.
+np$testing$assert_allclose(
+  optim_results$position, 
+  np$array(c(0.0, 0.0)),
+  atol = 1e-7
+  )
+
+# Print out the total number of function evaluations it took.
+sprintf("Function evaluations: %s", optim_results$num_objective_evaluations)
+```
+
+But I can't quite get it to work when we interrupt the TF model
+
+```{r}
+x <- rnorm(3, 2, 0.1)
+z <- variable(dim = 3)
+distribution(x) <- normal(z, 0.1)
+m <- model(z)
+
+o <- opt(m, optimiser = nelder_mead(), max_iterations = 500)
+
+## - then using a browser to interrupt the model 
+# The objective function
+objective
+
+# the initial_vertex
+tf$constant(c(inits))
+
+# 
+
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits)), 
+  batch_evaluate_objective = FALSE
+)
+
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits), dtype = tf$float64),
+  # initial_vertex = inits,
+  batch_evaluate_objective = TRUE
+  # batch_evaluate_objective = FALSE
+)
+
+# do we get a similar error when initial_vertex is a vector of length n-1 ?
+optim_results <- tfp$optimizer$nelder_mead_minimize(
+  sqrt_quadratic, 
+  # initial_vertex = start, 
+  initial_vertex = start,
+  func_tolerance = 1e-8,
+  batch_evaluate_objective = FALSE
+  )
+
+
+
+### nelder_mead shitshow
+optimise_fun(
+  objective_function = self$parameters$objective_function,
+  initial_simplex = NULL,
+  initial_vertex = tf$constant(inits),
+  step_sizes = NULL,
+  objective_at_initial_simplex = NULL,
+  objective_at_initial_vertex = NULL,
+  batch_evaluate_objective = FALSE,
+  func_tolerance = 1e-08,
+  position_tolerance = 1e-08,
+  parallel_iterations = 1L,
+  max_iterations = NULL,
+  reflection = NULL,
+  expansion = NULL,
+  contraction = NULL,
+  shrinkage = NULL,
+  name = NULL
+)
+
+```
+
+# Cataloguing current issues with TF2 2022-12-06
+
+24 tests failing
+
+Tests failing
+
+## `test_iid_samples.R`
+
+- R:196 multivariate samples are correct test_result\$p.value is not more than `p_value_threshold`. Difference: -0.001
+
+Code that breaks:
+
+```{r}
+sigma <- rwish(1, 5, diag(4))[1, , ]
+  
+compare_iid_samples(wishart,
+    rwish,
+    parameters = list(df = 7, Sigma = sigma)
+  )
+```
+
+There is an issue with the wishart samples - which feels very familiar. I'm really not sure what to do here - it isn't obvious to me where the difference is happening, however plotting the histogram of the greta samples and the r samples, we get the following:
+
+![](images/image-1540148448.png)
+
+![](images/image-90692754.png)
+
+Which suggests something is wrong with the greta wishart samples...it is very
+0 inflated. It turns out that the TFP distribution returns the wishart distribution as a lower triangular Cholesky factor. This is because we are using 
+
+`tfp$distributions$WishartTriL`
+
+Which returns a lower triangular Cholesky factor.
+
+So we need to uncholesky it. Which I think we can do with L %*% t(L).
+
+https://www.tensorflow.org/probability/api_docs/python/tfp/distributions/WishartTriL
+
+```{r}
+sigma <- rwish(1, 5, diag(4))[1, , ]
+
+debugonce(compare_iid_samples)
+compare_iid_samples(
+  wishart,
+  rwish,
+  parameters = list(df = 7, Sigma = sigma)
+)
+
+sigma <- rwish(1, 5, diag(4))[1, , ]
+sigma
+r_samples <- rWishart(
+  n = 3,
+  df = 7,
+  Sigma = sigma
+) 
+r_samples
+hist(r_samples)
+
+g_wish <- wishart(
+  df = 7,
+  Sigma = sigma
+)
+
+greta_samples <- calculate(g_wish, nsim = 3)
+greta_samples$g_wish
+
+aperm(g_wish_samples$g_wish_2, c(2,3,1))
+
+hist(unlist(greta_samples))
+
+##
+Sigma <- matrix(c(1,.3,.3,1),2,2)
+Sigma
+r <- rWishart(3, 7, Sigma)
+r
+ray <- r[,,1]
+ray
+r_mat <- matrix(ray, ncol = 2)
+r_mat
+r_mat %*% t(r_mat)
+hist(r)
+
+Sigma <- matrix(c(1,.3,.3,1),2,2)
+Sigma
+g_wish_2 <- wishart(df = 7, Sigma = Sigma)
+g_wish_2
+g_wish_samples <- greta::calculate(g_wish_2, nsim = 3)
+g_array <- aperm(g_wish_samples$g_wish_2, c(2,3,1))
+g_ray <- g_array[,,1]
+g_ray
+g_mat <- matrix(g_ray, ncol = 2)
+g_mat
+g_mat %*% t(g_mat)
+hist(g_mat %*% t(g_mat))
+
+hist(unlist(g_wish_samples))
+
+
+y <- rWishart(1, 4, diag(3))[, , 1]
+y
+u <- chol(y)
+u
+identical(y, chol2symm(u))
+identical(chol2symm(u), t(u) %*% u)
+## Not run: 
+u_greta <- cholesky_variable(3)
+y_greta <- chol2symm(u)
+
+##
+```
+
+
+# `test_inference.R`
+
+- `R:24`: bad mcmc proposals are rejected, `out` does not match "100% bad".
+
+These samples look like this, and they don't seem to really work - in that the sampling just seems to run!
+
+```{r}
+ # set up for numerical rejection of initial location
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+  x <- rnorm(10000, 1e6, 1)
+  z <- normal(-1e6, 1e-6)
+  distribution(x) <- normal(z, 1e6)
+  m <- model(z, precision = "single")
+
+  out <- get_output(
+    mcmc(m, n_samples = 10, warmup = 0, pb_update = 10)
+    )
+  out
+  expect_match(out, "100% bad")
+},
+wd = ".")
+
+```
+
+This produces the result:
+
+    running 4 chains simultaneously on up to 8 CPU cores
+      sampling ================================================= 10/10 | eta:  0s 
+
+- `R:26` - bad mcmc proposals are rejected - NULL doesn't generate error
+
+The above model also doesn't error when running MCMC on it - I can try and increase the distance the model is from it
+
+```{r}
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+  x <- rnorm(10000, 1e6, 1)x
+  z <- normal(-1e6, 1e-6)
+  distribution(x) <- normal(z, 1e6)
+  m <- model(z, precision = "single")
+
+draws <- mcmc(m,
+                    chains = 1,
+                    n_samples = 2,
+                    warmup = 0,
+                    verbose = FALSE,
+                    initial_values = initials(z = 1e60)
+      )
+},
+wd = ".")
+
+```
+
+- Some minor issues with the snapshot printing of CPU and GPU failures
+
+> these have now been resolved
+  
+- Failure (`test_inference.R:293)`: mcmc supports rwmh sampler with normal proposals
+
+> `expr` threw an unexpected error.
+Message: greta hit a tensorflow error:
+Error in py_call_impl(callable, dots$args, dots$keywords): RuntimeError: Evaluation error: ValueError: Cannot reshape a tensor with 0 elements to shape [1] (1 elements) for '{{node Reshape}} = Reshape[T=DT_DOUBLE, Tshape=DT_INT32](Mul, Reshape/shape)' with input shapes: [0], [1] and with input tensors computed as partial shapes: input[1] = [1]. .
+Class:   simpleError/error/condition
+
+Which is an error I've seen before due to the wrong shape input being handed over. The code that fails is:
+
+```{r}
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+x <- normal(0, 1)
+  m <- model(x)
+  expect_ok(draws <- mcmc(m,
+    sampler = rwmh("normal"),
+    n_samples = 100, warmup = 100,
+    verbose = FALSE
+  ))
+},
+wd = ".")
+
+```
+
+- Failure (`test_inference.R:305`): mcmc supports rwmh sampler with uniform proposals
+
+> `expr` threw an unexpected error. Message: greta hit a tensorflow error:
+Error in py_call_impl(callable, dots$args, dots$keywords): RuntimeError: Evaluation error: ValueError: Cannot reshape a tensor with 0 elements to shape [1] (1 elements) for '{{node Reshape}} = Reshape[T=DT_DOUBLE, Tshape=DT_INT32](Mul, Reshape/shape)' with input shapes: [0], [1] and with input tensors computed as partial shapes: input[1] = [1]. .
+Class:   simpleError/error/condition
+
+code is:
+
+```{r}
+###
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+set.seed(5)
+  x <- uniform(0, 1)
+  m <- model(x)
+  expect_ok(draws <- mcmc(m,
+    sampler = rwmh("uniform"),
+    n_samples = 100, warmup = 100,
+    verbose = FALSE
+  ))
+  },
+wd = ".")
+  
+```
+
+- Failure (`test_inference.R:317`): mcmc supports slice sampler with single precision models
+
+> `expr` threw an unexpected error. Message: greta hit a tensorflow error:
+Error in py_call_impl(callable, dots$args, dots$keywords): RuntimeError: Evaluation error: ValueError: slice index 1 of dimension 0 out of bounds. for '{{node strided_slice}} = StridedSlice[Index=DT_INT32, T=DT_DOUBLE, begin_mask=0, ellipsis_mask=0, end_mask=0, new_axis_mask=0, shrink_axis_mask=1](sampler_param_vec, strided_slice/stack, strided_slice/stack_1, strided_slice/stack_2)' with input shapes: [1], [1], [1], [1] and with computed input tensors: input[1] = <1>, input[2] = <2>, input[3] = <1>. .
+Class:   simpleError/error/condition
+
+code is:
+
+```{r}
+###
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+x <- uniform(0, 1)
+  m <- model(x, precision = "single")
+  expect_ok(draws <- mcmc(m,
+    sampler = slice(),
+    n_samples = 100, warmup = 100,
+    verbose = FALSE
+  ))
+  },
+wd = ".")
+
+```
+
+- Failure (`test_inference.R:351`): numerical issues are handled in mcmc
+
+This code should fail (well, the failure being captured by the snapshot), but doesn't:
+
+```{r}
+###
+reprex::reprex({
+devtools::load_all(".")
+source(here::here("tests", "testthat", "helpers.R"))
+alpha <- normal(0, 1)
+  x <- matrix(rnorm(6), 3, 2)
+  y <- t(rnorm(3))
+  z <- alpha * x
+  sigma <- z %*% t(z)
+  distribution(y) <- multivariate_normal(zeros(1, 3), sigma)
+  m <- model(alpha)
+
+  # running with bursts should error informatively
+  # expect_snapshot_error(
+    draws <- mcmc(m, verbose = FALSE)
+  # but no errors!
+  # )
+  },
+wd = ".")
+###
+
+
+```
+
+- Failure (`test_inference.R:375`): mcmc works in parallel
+
+> `expr` threw an unexpected error. Message: Valid installation of TensorFlow not found.
+
+For some reason setting a `future` plan makes it not work anymore
+We initially added a note in 
+https://github.com/greta-dev/greta/pull/534/commits/9f33fe02a0cbede26dca517f343e5e95762dc53b
+with a stop command stating, 
+
+"# stop("hi...from the future")"
+
+So perhaps search for that to identify where the bug is ocurring.
+
+```{r}
+###
+reprex::reprex({
+  devtools::load_all(".")
+  source(here::here("tests", "testthat", "helpers.R"))
+  m <- model(normal(0, 1))
+  
+  op <- future::plan()
+  # put the future plan back as we found it
+  withr::defer(future::plan(op))
+  future::plan(future::multisession)
+  
+  # one chain
+  expect_ok(draws <- mcmc(m,
+                          warmup = 10, n_samples = 10,
+                          chains = 1,
+                          verbose = FALSE
+  ))
+},
+wd = ".")
+###
+
+
+```
+
+It for some reason cannot detect a Python installation anymore - haven't looked into this yet
+
+##  `test_opt.R`
+
+    -   opt converges with TF optimisers
+    -   opt gives appropriate warning with deprecated optimisers in TFP
+    -   opt converges with TFP optimisers
+    -   TF opt returns hessians
+    -   TFP opt returns hessians

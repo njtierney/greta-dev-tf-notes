@@ -1,0 +1,92 @@
+
+In this error we need to work out how to appropriately return hessians
+
+```{r}
+sd <- runif(5)
+x <- rnorm(5, 2, 0.1)
+z <- variable(dim = 5)
+distribution(x) <- normal(z, sd)
+
+m <- model(z)
+o <- opt(m, hessian = TRUE, optimiser = gradient_descent())
+```
+
+So we can't get the hessian out, with the main error being:
+
+```
+object 'all_forward_variable_1' not found
+```
+
+This seems to indicate that some DAG or other object isn't being passed around appropriately.
+
+The error seems to be happening in `dag_class.R`
+
+In this part:
+
+```r
+if (!exists("hessian_list", envir = tfe)) {
+        tf_names <- vapply(nodes, self$tf_name, FUN.VALUE = "")
+        y <- tfe$joint_density
+        xs <- lapply(tf_names, get, tfe)
+        names(xs) <- NULL
+        # tfe$hessian_list <- self$on_graph(tf$hessians(y, xs))
+        tfe$hessian_list <- tf$hessians(y, xs)
+      }
+```
+
+So now let's set a browser up just before the `if` statement, and step into it
+
+```{r}
+o <- opt(m, hessian = TRUE, optimiser = gradient_descent())
+```
+
+From the above code, we get
+
+```r
+tf_names <- vapply(nodes, self$tf_name, FUN.VALUE = "")
+y <- tfe$joint_density
+```
+
+These have the value
+
+```{r}
+tf_names
+y
+```
+
+```r
+Browse[3]> tf_names
+                       z 
+"all_forward_variable_1" 
+Browse[3]> y
+NULL
+```
+
+So something has gone awry perhaps with `y` - which should have the joint density value?
+
+The `lapply` code breaks, with the following error
+
+```r
+lapply(tf_names, get, tfe)
+Error during wrapup: object 'all_forward_variable_1' not found
+Error: no more error handlers available (recursive errors?); invoking 'abort' restart
+```
+
+OK and looking at what is available in the `tfe`, we have
+
+```r
+Browse[3]> names(tfe)
+[1] "all_sampling_data_list"
+[2] "free_state"            
+[3] "all_forward_data_list" 
+[4] "hybrid_data_list"      
+[5] "tf_optimiser" 
+```
+
+Unfortunately it looks like `all_forward_variable_1` has been dropped off, and `tfe$all_forward_data_list` contains an empty list.
+
+```r
+Browse[3]> tfe$all_forward_data_list
+list()
+```
+

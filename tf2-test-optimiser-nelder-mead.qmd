@@ -1,0 +1,195 @@
+```{r}
+devtools::load_all(".")
+```
+
+OK so I can get bfgs optimizer to work:
+
+```{r}
+x <- rnorm(5, 2, 0.1)
+z <- variable(dim = 5)
+distribution(x) <- normal(z, 0.1)
+
+m <- model(z)
+
+o <- opt(m,
+         optimiser = bfgs(),
+         max_iterations = 200
+)
+
+o
+```
+
+But nelder mead doesn't work - it has a totally different interface and there's something strange going on with the arguments it expects
+
+```{r}
+o <- opt(m,
+         optimiser = nelder_mead(),
+         max_iterations = 200
+    )
+```
+
+Let's try to get a Python example in R from https://www.tensorflow.org/probability/api_docs/python/tfp/optimizer/nelder_mead_minimize to work
+
+```{r}
+# The objective function
+sqrt_quadratic <- function(x){
+  tf$sqrt(tf$reduce_sum(x ** 2L, axis = -1L))
+}
+  
+start <- tf$constant(c(6.0, -21.0))  # Starting point for the search.
+
+optim_results <- tfp$optimizer$nelder_mead_minimize(
+  sqrt_quadratic, 
+  initial_vertex = start,
+  func_tolerance = 1e-8,
+  batch_evaluate_objective = TRUE
+  )
+
+# Check that the search converged
+optim_results$converged$numpy()
+
+# Print out the total number of function evaluations it took.
+optim_results$num_objective_evaluations$numpy()
+```
+
+So let's interrupt the optimiser code with a browser, by placing it here in `optimiser_class.R`
+
+```
+     self$run_minimiser <- function(inits) {
+
+        # TF1/2 - will be better in the long run to have some kind of constructor
+        # function or similar to implement this
+        if (self$name == "bfgs") {
+          self$parameters$value_and_gradients_function <- value_and_gradient
+          self$parameters$initial_position <- inits
+        } else if (self$name == "nelder_mead") {
+          browser()
+```
+
+Note that we need to specifically check for the nelder_mead method, because TFP
+doesn't have a consistent interface
+
+```{r}
+x <- rnorm(3, 2, 0.1)
+z <- variable(dim = 3)
+distribution(x) <- normal(z, 0.1)
+m <- model(z)
+
+o <- opt(m, optimiser = nelder_mead(), max_iterations = 500)
+
+```
+
+Then, since we've used a browser to interrupt the model, we can explore with the parts.
+
+Remember that this code worked:
+
+```r
+# The objective function
+sqrt_quadratic <- function(x){
+  tf$sqrt(tf$reduce_sum(x ** 2L, axis = -1L))
+}
+  
+start <- tf$constant(c(6.0, -21.0))  # Starting point for the search.
+
+optim_results <- tfp$optimizer$nelder_mead_minimize(
+  objective_function = sqrt_quadratic, 
+  initial_vertex = start,
+  func_tolerance = 1e-8,
+  batch_evaluate_objective = TRUE
+  )
+```
+
+```{r}
+# The objective function
+objective
+
+# the initial_vertex
+tf$constant(c(inits))
+
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits)), 
+  batch_evaluate_objective = FALSE
+)
+```
+
+```
+Error in py_call_impl(callable, dots$args, dots$keywords) : 
+  RuntimeError: in user code:
+
+    File "/Library/Frameworks/R.framework/Versions/4.2-arm64/Resources/library/reticulate/python/rpytools/call.py", line 21, in python_function  *
+        raise RuntimeError(res[kErrorKey])
+
+    RuntimeError: Evaluation error: RuntimeError: Evaluation error: TypeError: Found incompatible dtypes, <class 'numpy.float32'> and <class 'numpy.float64'>. Seen so far: [<class 'numpy.float32'>, <class 'numpy.float64'>]
+    .
+    .
+```
+
+I'm fairly sure we want to do batch evaluation however?
+
+```{r}
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits)), 
+  batch_evaluate_objective = TRUE
+)
+```
+
+```
+ RuntimeError: Evaluation error: RuntimeError: Evaluation error: TypeError: Found incompatible dtypes, <class 'numpy.float32'> and <class 'numpy.float64'>. Seen so far: [<class 'numpy.float32'>, <class 'numpy.float64'>]
+```
+
+OK so looking at that error, I'm not sure what the deal is, since `objective` is already a function, and `inits` it a TF object. I don't know what it is complaining about?
+
+I can try and ensure that initial_vertex is specified as float64
+
+```{r}
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits), dtype = tf$float64),
+  batch_evaluate_objective = TRUE
+)
+```
+
+OK then we get something cryptic:
+
+```
+Error in py_call_impl(callable, dots$args, dots$keywords) : 
+  ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+```
+
+I'm not really sure what to do from here!
+
+```{r}
+# do we get a similar error when initial_vertex is a vector of length n-1 ?
+optim_results <- tfp$optimizer$nelder_mead_minimize(
+  sqrt_quadratic, 
+  # initial_vertex = start, 
+  initial_vertex = start,
+  func_tolerance = 1e-8,
+  batch_evaluate_objective = FALSE
+  )
+
+### nelder_mead schenanigans
+optimise_fun(
+  objective_function = self$parameters$objective_function,
+  initial_simplex = NULL,
+  initial_vertex = tf$constant(inits),
+  step_sizes = NULL,
+  objective_at_initial_simplex = NULL,
+  objective_at_initial_vertex = NULL,
+  batch_evaluate_objective = FALSE,
+  func_tolerance = 1e-08,
+  position_tolerance = 1e-08,
+  parallel_iterations = 1L,
+  max_iterations = NULL,
+  reflection = NULL,
+  expansion = NULL,
+  contraction = NULL,
+  shrinkage = NULL,
+  name = NULL
+)
+
+```
+
+
