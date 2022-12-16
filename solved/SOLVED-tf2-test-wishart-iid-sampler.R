@@ -31,6 +31,38 @@ reprex::reprex({
                       rwish,
                       parameters = list(df = 7, Sigma = sigma)
   )
+
+  # also density
+
+
+  # parameters to test
+  m <- 5
+  df <- m + 1
+  sig <- rWishart(1, df, diag(m))[, , 1]
+
+  # wrapper for argument names
+  dwishart <- function(x, df, Sigma, log = FALSE) { # nolint
+    ans <- MCMCpack::dwish(W = x, v = df, S = Sigma)
+    if (log) {
+      ans <- log(ans)
+    }
+    ans
+  }
+
+  # no vectorised wishart, so loop through all of these
+  replicate(
+    10,
+    compare_distribution(
+      greta::wishart,
+      dwishart,
+      parameters = list(
+        df = df,
+        Sigma = sig
+      ),
+      x = rWishart(1, df, sig)[, , 1],
+      multivariate = TRUE
+    )
+  )
 },
 wd = "."
 )
