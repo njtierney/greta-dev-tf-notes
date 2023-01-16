@@ -2,6 +2,7 @@
 In this error we need to work out how to appropriately return hessians
 
 ```{r}
+devtools::load_all("../greta/")
 sd <- runif(5)
 x <- rnorm(5, 2, 0.1)
 z <- variable(dim = 5)

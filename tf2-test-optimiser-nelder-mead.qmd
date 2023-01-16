@@ -1,5 +1,8 @@
+NOTE that this must use the "squash-optimisers" branch of greta.
+
 ```{r}
-devtools::load_all(".")
+devtools::load_all("../greta/")
+source(here::here("../greta/", "tests", "testthat", "helpers.R"))
 ```
 
 OK so I can get bfgs optimizer to work:
@@ -28,6 +31,19 @@ o <- opt(m,
     )
 ```
 
+Specifically, the error is
+
+```
+Error in py_call_impl(callable, dots$args, dots$keywords) : 
+  RuntimeError: Evaluation error: RuntimeError: Evaluation error: TypeError: Found incompatible dtypes, <class 'numpy.float32'> and <class 'numpy.float64'>. Seen so far: [<class 'numpy.float32'>, <class 'numpy.float64'>]
+.
+.
+```
+
+Which is annoying as it seems to indicate that the error is to do with different types of data, which I seem to remember from something else that I fixed recently, which I think called "sanitise_dtypes" or something...
+
+But I think that the issue is that it is trying to reconcile float 32 and float 64?
+
 Let's try to get a Python example in R from https://www.tensorflow.org/probability/api_docs/python/tfp/optimizer/nelder_mead_minimize to work
 
 ```{r}
@@ -35,9 +51,11 @@ Let's try to get a Python example in R from https://www.tensorflow.org/probabili
 sqrt_quadratic <- function(x){
   tf$sqrt(tf$reduce_sum(x ** 2L, axis = -1L))
 }
-  
-start <- tf$constant(c(6.0, -21.0))  # Starting point for the search.
 
+c(6, -21)
+
+start <- tf$constant(c(6.0, -21.0))  # Starting point for the search.
+start
 optim_results <- tfp$optimizer$nelder_mead_minimize(
   sqrt_quadratic, 
   initial_vertex = start,
@@ -52,22 +70,31 @@ optim_results$converged$numpy()
 optim_results$num_objective_evaluations$numpy()
 ```
 
+One thing to note here - `start` is float32.
+
 So let's interrupt the optimiser code with a browser, by placing it here in `optimiser_class.R`
 
 ```
      self$run_minimiser <- function(inits) {
-
         # TF1/2 - will be better in the long run to have some kind of constructor
         # function or similar to implement this
         if (self$name == "bfgs") {
           self$parameters$value_and_gradients_function <- value_and_gradient
           self$parameters$initial_position <- inits
         } else if (self$name == "nelder_mead") {
-          browser()
+          browser() # <<< <<<
 ```
 
-Note that we need to specifically check for the nelder_mead method, because TFP
-doesn't have a consistent interface
+(Note that we need to specifically check for the nelder_mead method, because TFP
+doesn't have a consistent interface)
+
+Then load all etc
+
+```{r}
+devtools::load_all("../greta/")
+source(here::here("../greta/", "tests", "testthat", "helpers.R"))
+```
+
 
 ```{r}
 x <- rnorm(3, 2, 0.1)
@@ -99,6 +126,8 @@ optim_results <- tfp$optimizer$nelder_mead_minimize(
   )
 ```
 
+so lets explore what we get with our code
+
 ```{r}
 # The objective function
 objective
@@ -125,12 +154,37 @@ Error in py_call_impl(callable, dots$args, dots$keywords) :
     .
 ```
 
-I'm fairly sure we want to do batch evaluation however?
+OK but then if we change to use `tf$float64()` in this case:
+
+```{r}
+# The objective function
+objective
+
+# the initial_vertex
+tf$constant(c(inits))
+
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits), dtype = tf$float64), 
+  batch_evaluate_objective = FALSE
+)
+```
+
+```
+TypeError: Only integers, slices (`:`), ellipsis (`...`), tf.newaxis (`None`) and scalar tf.int32/tf.int64 tensors are valid indices, got <tf.Tensor: shape=(3,), dtype=int32, numpy=array([0, 1, 2], dtype=int32)>
+```
+
+Which I think is an indication that we want to do batch evaluation? The help file for batch evaluation says:
+
+> If True, the objective function will be evaluated on all the vertices of the simplex packed into a single tensor. If False, the objective will be mapped across each vertex separately. Evaluating the objective function in a batch allows use of vectorization and should be preferred if the objective function allows it.
+
+
+
 
 ```{r}
 tfp$optimizer$nelder_mead_minimize(
   objective_function = objective, 
-  initial_vertex = tf$constant(c(inits)), 
+  initial_vertex = tf$constant(c(inits), dtype = tf_float()), 
   batch_evaluate_objective = TRUE
 )
 ```
@@ -141,7 +195,19 @@ tfp$optimizer$nelder_mead_minimize(
 
 OK so looking at that error, I'm not sure what the deal is, since `objective` is already a function, and `inits` it a TF object. I don't know what it is complaining about?
 
-I can try and ensure that initial_vertex is specified as float64
+I can try and ensure that initial_vertex is specified as float32
+
+```{r}
+tfp$optimizer$nelder_mead_minimize(
+  objective_function = objective, 
+  initial_vertex = tf$constant(c(inits), dtype = tf$float32),
+  batch_evaluate_objective = TRUE
+)
+```
+
+Same error!
+
+What if we specify it as float64?
 
 ```{r}
 tfp$optimizer$nelder_mead_minimize(

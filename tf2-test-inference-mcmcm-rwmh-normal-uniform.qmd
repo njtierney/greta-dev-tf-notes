@@ -1,7 +1,7 @@
 
 ```{r}
-devtools::load_all(".")
-source(here::here("tests", "testthat", "helpers.R"))
+devtools::load_all("../greta/")
+source(here::here("../greta/", "tests", "testthat", "helpers.R"))
 ```
 
 
@@ -56,8 +56,6 @@ m <- model(x)
 draws <- mcmc(m, sampler = hmc())
 ```
 
-
-
 Let's go a journey - first step into mcmc
 
 ```{r}
@@ -91,10 +89,11 @@ OK so the error occurs here in `sample_carefully`
 I'll place a browser there and take a look
 
 ```{r}
+devtools::load_all("../greta/")
 x <- normal(0, 1)
 m <- model(x)
 draws <- mcmc(m, sampler = rwmh())
-```
+    ```
 
 OK and because the code uses `tf_function` it needs to be undone there somehow
 
