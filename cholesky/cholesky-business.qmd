@@ -124,16 +124,24 @@ Which runs `node$new()` on `dim.` this then does the process of adding the dimen
 Some options are set:
 
 ```r
+super$initialize(dim)
+
 # for all distributions, set name, store dims, and set whether discrete
-      self$distribution_name <- name
-      self$discrete <- discrete
-      self$multivariate <- multivariate
-      self$truncatable <- truncatable
+self$distribution_name <- name
+self$discrete <- discrete
+self$multivariate <- multivariate
+self$truncatable <- truncatable
 ```
 
-Then 
+Then for all distributions, set name, store dims, and set whether discrete
 
 ```r
+# for all distributions, set name, store dims, and set whether discrete
+self$distribution_name <- name
+self$discrete <- discrete
+self$multivariate <- multivariate
+self$truncatable <- truncatable
+
 # initialize the target values of this distribution
 self$add_target(self$create_target(truncation))
 ```
@@ -813,6 +821,30 @@ if (mode == "forward") {
 ```
 
 Which I think makes sense in that this greta object doesn't know about its parents, so I need to work out how to make sure it can know about them, and where that happens, so I'll have to dive a bit deeper.
+
+## Side quest: comparing log(x) to chol(x)
+
+```{r}
+devtools::load_all("../greta/")
+x <- wishart(df = 4, Sigma = diag(3))
+debugonce(greta:::log.greta_array)
+log_x <- log(x)
+debugonce(calculate)
+calculate(log_x, nsim = 1)
+debugonce(chol)
+chol_x <- chol(x)
+debugonce(calculate)
+calculate(x, nsim = 1)
+```
+
+A key point so far is that
+
+```r
+mode <- dag$how_to_define(self)
+```
+
+Is "sampling" for `log`, but "forward" for cholesky.
+
 
 
 # calculate: on x_chol: one where x is provided and you tell it to calculate x_chol. 

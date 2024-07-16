@@ -40,7 +40,14 @@ Error in py_call_impl(callable, dots$args, dots$keywords) :
 .
 ```
 
-Which is annoying as it seems to indicate that the error is to do with different types of data, which I seem to remember from something else that I fixed recently, which I think called "sanitise_dtypes" or something...
+Which is annoying as it seems to indicate that the error is to do with different types of data, which I seem to remember from something else that I fixed recently, which I think called "sanitise_dtypes" or something... but tinkering around with that somewhat, I couldn't really get anything meaningful - I ended up hard coded the `inits` to be float64, but this just resulted in the error:
+
+```
+Error in py_call_impl(callable, dots$args, dots$keywords) : 
+  ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+```
+
+Which is actually an error that we get later - when we try and do the same thing.
 
 But I think that the issue is that it is trying to reconcile float 32 and float 64?
 

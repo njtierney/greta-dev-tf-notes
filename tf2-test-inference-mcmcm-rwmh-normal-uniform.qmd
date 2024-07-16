@@ -1,3 +1,4 @@
+This issue is regarding the fact we cannot do RWMH sampling in greta at the moment
 
 ```{r}
 devtools::load_all("../greta/")
@@ -9,14 +10,11 @@ We get an error for rwmh like so
 ```{r}
 x <- normal(0, 1)
 m <- model(x)
-
-# this errors
-draws <- mcmc(m,
-              sampler = rwmh("normal"),
-              n_samples = 100, 
-              warmup = 100,
-              verbose = FALSE)
-
+draws <- mcmc(m, sampler = slice())
+plot(draws)
+m <- model(x)
+draws <- mcmc(m, sampler = rwmh(proposal = "uniform"))
+plot(draws)
 ```
 
 The error being
@@ -36,17 +34,16 @@ input tensors computed as partial
 shapes: input[1] = [1]. .
 ```
 
-Minimally, the code to fail is:
+
+Note that we get the same error for the sampler, `slice` as well:
 
 ```{r}
-x <- normal(0, 1)
-m <- model(x)
-draws <- mcmc(m, sampler = rwmh())
+draws <- mcmc(m, sampler = slice())
 ```
 
 
 So my thought is that there is something the wrong shape or dimension here 
-related to rwmh sampler?
+related to rwmh/slice samplers? Let's examine the rwmh sampler first.
 
 We don't get this error with the default sampler, `hmc`.
 
@@ -213,5 +210,3 @@ I tried to just use `self$define_tf_draws` as it's own function, defining
 the inputs, `free_state` etc, as either the named variables, or as the Tensors
 above, but I think I'm missing something. Not sure how to proceed further from here.
 
-
-Note that we get the same error for the sampler, `slice` as well
