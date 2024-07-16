@@ -137,7 +137,7 @@ create_target = function(truncation) {
 
 Then we create an operation node from the variable node (with a chol2symm operation). 
 
-Nick: I'm not sure where to do this? Do we just put this in
+Nick: I'm not sure where to do this? Do we just put this inside of `wishart_distribution`
 
 ```{r}
  # reshape to a symmetric matrix (retaining cholesky representation)
@@ -147,10 +147,105 @@ Nick: I'm not sure where to do this? Do we just put this in
   target_node <- get_node(matrix_greta_array)
 ```
 
+Perhaps after:
+
+```{r}
+     # initialize with a cholesky factor
+      super$initialize("wishart", dim(sigma), multivariate = TRUE)
+```
+
+?
 
 We would need to modify the functions in the wishart distribution node, so that when the density is evaluated, it takes the cholesky factor as the thing it's evaluating the density on, but then when doing fitting - this would work, because a proposed value would still evaluate the density correcttly. 
 
-When sampling, the variable node could define itself from the distribution directly. So we'd need the Wishart distribution sampling method to sample the cholseky factor, rather than sample the symmetric (chol2symm operation).
+So we would be changing this part of Wishart:
+
+```{r}
+tf_distrib = function(parameters, dag) {
+
+      # this is messy, we want to use the tfp wishart, but can't define the
+      # density without expanding the dimension of x
+
+      log_prob <- function(x) {
+
+        # reshape the dimensions
+        df <- tf_flatten(parameters$df)
+        sigma <- tf$expand_dims(parameters$sigma, 1L)
+        x <- tf$expand_dims(x, 1L)
+
+        # get the cholesky factor of Sigma in tf orientation
+        if (self$sigma_is_cholesky) {
+          sigma_chol <- tf$linalg$matrix_transpose(sigma)
+        } else {
+          sigma_chol <- tf$linalg$cholesky(sigma)
+        }
+
+        # get the cholesky factor of the target in tf_orientation
+        if (self$target_is_cholesky) {
+          x_chol <- tf$linalg$matrix_transpose(x)
+        } else {
+          x_chol <- tf$linalg$cholesky(x)
+        }
+
+        # use the density for choleskied x, with choleskied Sigma
+        distrib <- tfp$distributions$WishartTriL(
+          df = df,
+          scale_tril = sigma_chol,
+          input_output_cholesky = TRUE
+        )
+
+        distrib$log_prob(x_chol)
+      }
+      
+      # ... sample bit is after this
+}
+```
+
+When sampling, the variable node could define itself from the distribution directly. So we'd need the Wishart distribution sampling method to sample the cholesky factor, rather than sample the symmetric (chol2symm operation).
+
+```{r}
+tf_distrib = function(parameters, dag) {
+  # log_prob part
+  # ...
+        sample <- function(seed) {
+        df <- tf$squeeze(parameters$df, 1:2)
+        sigma <- parameters$sigma
+
+        # get the cholesky factor of Sigma in tf orientation
+        if (self$sigma_is_cholesky) {
+          sigma_chol <- tf$linalg$matrix_transpose(sigma)
+        } else {
+          sigma_chol <- tf$linalg$cholesky(sigma)
+        }
+
+        # use the density for choleskied x, with choleskied Sigma
+        distrib <- tfp$distributions$WishartTriL(
+          df = df,
+          scale_tril = sigma_chol,
+          ## TF1/2 could potentially flip to TRUE, then at
+          ## target_is_cholesky check below we could use tf_chol2symm
+          ## instead of tf_chol, as this should be more efficient
+          input_output_cholesky = FALSE
+        )
+
+        ## TF1/2
+        ## The issue with getting the cholesky part of the Wishart
+        ## isn't happening here,
+        ## This produces something that looks about right
+        draws <- distrib$sample(seed = seed)
+
+        ## TF1/2 - as above, this would need to be !self$target_is_cholesky
+        if (self$target_is_cholesky) {
+          draws <- tf_chol(draws)
+        }
+
+        draws
+        }
+        # ...
+}
+```
+
+
 
 Some other things may break from this:
 
